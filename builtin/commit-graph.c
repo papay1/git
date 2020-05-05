@@ -153,13 +153,14 @@ static int read_one_commit(struct oidset *commits, struct progress *progress,
 
 	display_progress(progress, oidset_size(commits) + 1);
 
+	if (oid_object_info(the_repository, &oid, NULL) < 0) {
+		error(_("object %s does not exist"), hash);
+		return 1;
+	}
+
 	result = lookup_commit_reference_gently(the_repository, &oid, 1);
 	if (result)
 		oidset_insert(commits, &result->object.oid);
-	else {
-		error(_("invalid commit object id: %s"), hash);
-		return 1;
-	}
 	return 0;
 }
 
@@ -239,7 +240,6 @@ static int graph_write(int argc, const char **argv)
 		struct strbuf buf = STRBUF_INIT;
 		if (opts.stdin_commits) {
 			oidset_init(&commits, 0);
-			flags |= COMMIT_GRAPH_WRITE_CHECK_OIDS;
 			if (opts.progress)
 				progress = start_delayed_progress(
 					_("Analyzing commits from stdin"), 0);
