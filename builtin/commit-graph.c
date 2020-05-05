@@ -138,12 +138,25 @@ static int write_option_parse_split(const struct option *opt, const char *arg,
 	return 0;
 }
 
+static int read_one_commit(struct oidset *commits, char *hash)
+{
+	struct object_id oid;
+	const char *end;
+
+	if (parse_oid_hex(hash, &oid, &end)) {
+		error(_("unexpected non-hex object ID: %s"), hash);
+		return 1;
+	}
+
+	oidset_insert(commits, &oid);
+	return 0;
+}
+
 static int graph_write(int argc, const char **argv)
 {
-	struct string_list *pack_indexes = NULL;
+	struct string_list pack_indexes;
 	struct oidset commits = OIDSET_INIT;
 	struct object_directory *odb = NULL;
-	struct string_list lines;
 	int result = 0;
 	enum commit_graph_write_flags flags = 0;
 
@@ -209,44 +222,35 @@ static int graph_write(int argc, const char **argv)
 		return 0;
 	}
 
-	string_list_init(&lines, 0);
+	string_list_init(&pack_indexes, 0);
 	if (opts.stdin_packs || opts.stdin_commits) {
 		struct strbuf buf = STRBUF_INIT;
-
-		while (strbuf_getline(&buf, stdin) != EOF)
-			string_list_append(&lines, strbuf_detach(&buf, NULL));
-
-		if (opts.stdin_packs)
-			pack_indexes = &lines;
 		if (opts.stdin_commits) {
-			struct string_list_item *item;
-			oidset_init(&commits, lines.nr);
-			for_each_string_list_item(item, &lines) {
-				struct object_id oid;
-				const char *end;
-
-				if (parse_oid_hex(item->string, &oid, &end)) {
-					error(_("unexpected non-hex object ID: "
-						"%s"), item->string);
-					return 1;
-				}
-
-				oidset_insert(&commits, &oid);
-			}
+			oidset_init(&commits, 0);
 			flags |= COMMIT_GRAPH_WRITE_CHECK_OIDS;
+		}
+
+		while (strbuf_getline(&buf, stdin) != EOF) {
+			char *line = strbuf_detach(&buf, NULL);
+			if (opts.stdin_commits) {
+				int result = read_one_commit(&commits, line);
+				if (result)
+					return result;
+			} else
+				string_list_append(&pack_indexes, line);
 		}
 
 		UNLEAK(buf);
 	}
 
 	if (write_commit_graph(odb,
-			       pack_indexes,
+			       opts.stdin_packs ? &pack_indexes : NULL,
 			       opts.stdin_commits ? &commits : NULL,
 			       flags,
 			       &split_opts))
 		result = 1;
 
-	UNLEAK(lines);
+	UNLEAK(pack_indexes);
 	return result;
 }
 
