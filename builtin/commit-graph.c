@@ -6,6 +6,7 @@
 #include "repository.h"
 #include "commit-graph.h"
 #include "object-store.h"
+#include "progress.h"
 
 static char const * const builtin_commit_graph_usage[] = {
 	N_("git commit-graph verify [--object-dir <objdir>] [--shallow] [--[no-]progress]"),
@@ -138,8 +139,10 @@ static int write_option_parse_split(const struct option *opt, const char *arg,
 	return 0;
 }
 
-static int read_one_commit(struct oidset *commits, char *hash)
+static int read_one_commit(struct oidset *commits, struct progress *progress,
+			   char *hash)
 {
+	struct commit *result;
 	struct object_id oid;
 	const char *end;
 
@@ -148,7 +151,15 @@ static int read_one_commit(struct oidset *commits, char *hash)
 		return 1;
 	}
 
-	oidset_insert(commits, &oid);
+	display_progress(progress, oidset_size(commits) + 1);
+
+	result = lookup_commit_reference_gently(the_repository, &oid, 1);
+	if (result)
+		oidset_insert(commits, &result->object.oid);
+	else {
+		error(_("invalid commit object id: %s"), hash);
+		return 1;
+	}
 	return 0;
 }
 
@@ -159,6 +170,7 @@ static int graph_write(int argc, const char **argv)
 	struct object_directory *odb = NULL;
 	int result = 0;
 	enum commit_graph_write_flags flags = 0;
+	struct progress *progress = NULL;
 
 	static struct option builtin_commit_graph_write_options[] = {
 		OPT_STRING(0, "object-dir", &opts.obj_dir,
@@ -228,17 +240,24 @@ static int graph_write(int argc, const char **argv)
 		if (opts.stdin_commits) {
 			oidset_init(&commits, 0);
 			flags |= COMMIT_GRAPH_WRITE_CHECK_OIDS;
+			if (opts.progress)
+				progress = start_delayed_progress(
+					_("Analyzing commits from stdin"), 0);
 		}
 
 		while (strbuf_getline(&buf, stdin) != EOF) {
 			char *line = strbuf_detach(&buf, NULL);
 			if (opts.stdin_commits) {
-				int result = read_one_commit(&commits, line);
+				int result = read_one_commit(&commits, progress,
+							     line);
 				if (result)
 					return result;
 			} else
 				string_list_append(&pack_indexes, line);
 		}
+
+		if (progress)
+			stop_progress(&progress);
 
 		UNLEAK(buf);
 	}
